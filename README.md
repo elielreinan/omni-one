@@ -44,7 +44,7 @@ Por padrão, o OmniOne lista projetos em `C:\Users\seu-usuário\Workspace`. Para
 
 ## Código aberto
 
-Este projeto é **código aberto**: você pode usar, estudar, modificar e desenvolver outras ferramentas por cima dele. Pull requests e ideias são bem-vindas — veja as [issues](https://github.com/Eli2Dev/omni-one/issues).
+Este projeto é **código aberto**: você pode usar, estudar, modificar e desenvolver outras ferramentas por cima dele. Pull requests e ideias são bem-vindas — veja as [issues](https://github.com/elielreinan/omni-one/issues).
 
 **Aceito feedbacks e críticas.** Se algo quebrou, faltou ou pode melhorar, abra uma issue ou entre em contato.
 
