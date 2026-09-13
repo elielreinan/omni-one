@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-Instala o OmniOne e remove atalhos antigos.
+Instala a versão atual do OmniOne e remove atalhos antigos.
 
 .DESCRIPTION
-This script:
-1. Removes old batch file shortcuts from Desktop
-2. Copia o OmniOne para um local permanente
-3. Creates a shortcut in Startup folder for auto-start
-4. Creates a Desktop shortcut
-5. Optionally starts the tray app immediately
+Este script:
+1. Copia o OmniOne para um local permanente
+2. Remove atalhos antigos da Área de Trabalho
+3. Cria um atalho na pasta de Inicialização (auto-start)
+4. Cria um atalho na Área de Trabalho
+5. Opcionalmente inicia a janela compacta imediatamente
 #>
 
 param(
@@ -32,7 +32,7 @@ $startup = [Environment]::GetFolderPath("Startup")
 # 1. Verify source exists
 if (-not (Test-Path $exeSource)) {
     Write-Error "Source executable not found at: $exeSource"
-    Write-Host "Crie o executável primeiro: python -m PyInstaller omnione_tray.spec" -ForegroundColor Red
+    Write-Host "Crie o executável primeiro: python -m PyInstaller omnione_tray.spec --clean" -ForegroundColor Red
     exit 1
 }
 
@@ -50,11 +50,11 @@ if ($runningApps) {
     Start-Sleep -Seconds 1
 }
 
-# 4. Copy executable
+# 1. Copia o executável
 Copy-Item -Path $exeSource -Destination $exeTarget -Force
 Write-Host "[OK] Copied executable to: $exeTarget" -ForegroundColor Green
 
-# 4. Remove old shortcuts from Desktop
+# 2. Remove atalhos antigos da Área de Trabalho
 $oldShortcuts = @(
     "Claude Code + OmniRoute.lnk",
     "Parar OmniRoute.lnk",
@@ -70,7 +70,7 @@ foreach ($shortcut in $oldShortcuts) {
     }
 }
 
-# 5. Create Desktop shortcut
+# 3. Cria o atalho na Área de Trabalho
 $shortcutPath = Join-Path $desktop "OmniOne.lnk"
 $wsh = New-Object -ComObject WScript.Shell
 $sc = $wsh.CreateShortcut($shortcutPath)
@@ -81,7 +81,7 @@ $sc.IconLocation = "$exeTarget,0"
 $sc.Save()
 Write-Host "[OK] Created Desktop shortcut: $shortcutPath" -ForegroundColor Green
 
-# 6. Create Startup shortcut (auto-start with Windows)
+# 4. Cria o atalho de Inicialização (auto-start com o Windows)
 if ($AutoStart) {
     $startupShortcut = Join-Path $startup "OmniOne.lnk"
     $sc2 = $wsh.CreateShortcut($startupShortcut)
@@ -93,12 +93,12 @@ if ($AutoStart) {
     Write-Host "[OK] Created Startup shortcut for auto-start" -ForegroundColor Green
 }
 
-# 7. Start the app now
+# 5. Inicia o app agora
 if ($StartNow) {
     Write-Host ""
     Write-Host "Iniciando OmniOne..." -ForegroundColor Cyan
     Start-Process -FilePath $exeTarget -WorkingDirectory $installDir
-    Write-Host "[OK] OmniOne iniciado - verifique a bandeja do sistema" -ForegroundColor Green
+    Write-Host "[OK] OmniOne iniciado - a janela compacta está pronta" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -107,12 +107,14 @@ Write-Host ""
 Write-Host "O OmniOne foi instalado em:"
 Write-Host "  $exeTarget"
 Write-Host ""
-Write-Host "Features:"
-Write-Host "  - Single tray icon in taskbar (green=running, red=stopped)"
+Write-Host "Recursos:"
+Write-Host "  - Janela compacta de controle (abre imediatamente)"
 Write-Host "  - Iniciar, parar e reiniciar o servidor OmniOne"
-Write-Host "  - Launch Claude Code in any workspace"
-Write-Host "  - View logs and open dashboard"
-Write-Host "  - Auto-starts with Windows"
+Write-Host "  - Abre o Claude Code em qualquer workspace"
+Write-Host "  - Abre logs e dashboard"
+Write-Host "  - Inicia automaticamente com o Windows"
 Write-Host ""
-Write-Host "Old batch file shortcuts have been removed from Desktop."
+Write-Host "Atalhos antigos foram removidos da Área de Trabalho."
+Write-Host ""
+Write-Host "Prod por 2E · https://e2dev.me/" -ForegroundColor Cyan
 Write-Host ""

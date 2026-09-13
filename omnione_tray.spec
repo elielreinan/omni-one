@@ -8,11 +8,6 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        'pystray',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageDraw',
-        'PIL.ImageFont',
         'requests',
         'urllib3',
         'certifi',
@@ -46,11 +41,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Keep a visible loading/status window for the user
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='omnione_icon.ico',
+    icon='omnione-logo.ico',
 )

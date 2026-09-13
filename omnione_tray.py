@@ -1,49 +1,61 @@
 #!/usr/bin/env python3
-"""
-OmniOne Tray Application
-Unified system tray controller for OmniRoute server + Claude Code integration.
-Replaces all batch files with a single, reliable tray app.
-"""
+from __future__ import annotations
+"""Controlador compacto do OmniOne para o OmniRoute e o Claude Code."""
 
-import sys
 import os
 import ctypes
+import re
 import subprocess
 import threading
 import time
-import json
+import tkinter as tk
+from tkinter import messagebox, ttk
 import requests
 from pathlib import Path
 from typing import Optional, Tuple
 
-try:
-    import pystray
-    from PIL import Image, ImageDraw, ImageFont
-except ImportError:
-    print("Installing required packages...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pystray", "pillow", "requests"])
-    import pystray
-    from PIL import Image, ImageDraw, ImageFont
-
-# ─── Configuration ───
-OMNIROUTE_VERSION = "3.8.49"
+# ─── Configuração ───
+OMNIROUTE_VERSION = "3.8.50"
 HEALTH_URL = "http://localhost:20128/api/monitoring/health"
-# Users can set OMNIONE_WORKSPACE_ROOT to any folder containing their projects.
-# The default keeps the app portable between Windows accounts.
+
+# Usuários podem definir OMNIONE_WORKSPACE_ROOT para qualquer pasta com seus projetos.
+# O padrão mantém o app portátil entre contas do Windows.
 WORKSPACE_ROOT = Path(
     os.environ.get("OMNIONE_WORKSPACE_ROOT", str(Path.home() / "Workspace"))
 ).expanduser()
 OMNIROUTE_DIR = Path.home() / ".omniroute"
 OMNIROUTE_LOGS = OMNIROUTE_DIR / "logs"
+# Scripts gerados pelo app ficam fora da pasta de logs.
+OMNIROUTE_LAUNCHERS = OMNIROUTE_DIR / "launchers"
 OMNIROUTE_PID_FILE = OMNIROUTE_DIR / "server" / ".pid"
 OMNIROUTE_CACHE = OMNIROUTE_DIR / ".omnione-cli-path"
+DEBUG_LOG = OMNIROUTE_LOGS / "omnione-debug.log"
 
-# Cached CLI path
+# Caracteres com significado especial para o cmd.exe; caminhos do CLI não devem contê-los.
+_UNSAFE_CMD_CHARS = re.compile(r'[&|^<>%"!]')
+
+# Caminho do CLI em cache
 _cached_cli_path: Optional[str] = None
 
 
+def _debug_log(message: str) -> None:
+    """Registra tentativas de resolução do CLI quando OMNIONE_DEBUG=1."""
+    if os.environ.get("OMNIONE_DEBUG") != "1":
+        return
+    try:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except Exception:
+        pass
+
+
+def _cli_is_safe(value: str) -> bool:
+    """Rejeita metacaracteres do cmd.exe em caminhos vindos de configuração."""
+    return not _UNSAFE_CMD_CHARS.search(value or "")
+
+
 def acquire_single_instance() -> bool:
-    """Prevent duplicate OmniOne controllers from running on Windows."""
+    """Evita controladores OmniOne duplicados em execução no Windows."""
     if os.name != "nt":
         return True
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\OmniOneTrayController")
@@ -54,59 +66,60 @@ def acquire_single_instance() -> bool:
     return True
 
 
-def show_loading(stop_event: threading.Event) -> None:
-    """Keep the console informative while the tray icon is being prepared."""
-    frames = "|/-\\"
-    index = 0
-    while not stop_event.is_set():
-        print(f"\r[OmniOne] Carregando {frames[index % len(frames)]}", end="", flush=True)
-        index += 1
-        stop_event.wait(0.15)
-
-
-# ─── Utility Functions ───
+# ─── Funções utilitárias ───
 
 def get_omniroute_cmd() -> str:
-    """Resolve the omniroute command (same logic as batch files)."""
+    """Resolve o comando omniroute (mesma lógica dos arquivos batch)."""
     global _cached_cli_path
 
-    # 1. Check if 'omniroute' is in PATH
+    # 1. Prefere o shim npm omniroute.cmd porque o app inicia via cmd.exe.
+    try:
+        result = subprocess.run(["where", "omniroute.cmd"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            return "omniroute.cmd"
+    except Exception as e:
+        _debug_log(f"where omniroute.cmd: {e}")
+
+    # 2. Verifica se 'omniroute' está no PATH
     try:
         result = subprocess.run(["where", "omniroute"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0 and result.stdout.strip():
             _cached_cli_path = "omniroute"
             return "omniroute"
-    except Exception:
-        pass
+    except Exception as e:
+        _debug_log(f"where omniroute: {e}")
 
-    # 2. Check cached path
+    # 3. Verifica o caminho em cache
     if OMNIROUTE_CACHE.exists():
         try:
             cached = OMNIROUTE_CACHE.read_text(encoding="utf-8").strip()
-            if cached and Path(cached).exists():
+            if cached and Path(cached).exists() and _cli_is_safe(cached):
                 _cached_cli_path = cached
                 return f'node "{cached}"'
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_log(f"cache CLI: {e}")
 
-    # 3. Find in npm cache
+    # 4. Procura no cache do npm
     try:
         localappdata = os.environ.get("LOCALAPPDATA", "")
         matches = list(Path(localappdata).glob("npm-cache/_npx/*/node_modules/omniroute/bin/omniroute.mjs"))
-        if matches:
-            _cached_cli_path = str(matches[0])
+        for match in matches:
+            if not _cli_is_safe(str(match)):
+                continue
+            _cached_cli_path = str(match)
             OMNIROUTE_CACHE.parent.mkdir(parents=True, exist_ok=True)
             OMNIROUTE_CACHE.write_text(_cached_cli_path, encoding="utf-8")
             return f'node "{_cached_cli_path}"'
-    except Exception:
-        pass
+    except Exception as e:
+        _debug_log(f"cache npm: {e}")
 
-    # 4. Fallback to npx
+    # 5. Recorre ao npx
+    _debug_log("nenhum CLI encontrado; usando fallback npx")
     return f"npx --yes -p omniroute@{OMNIROUTE_VERSION} omniroute"
 
 
 def run_cmd(cmd: str, cwd: Optional[Path] = None, timeout: int = 30) -> Tuple[int, str, str]:
-    """Run command and return (exit_code, stdout, stderr)."""
+    """Executa um comando e retorna (exit_code, stdout, stderr)."""
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout, cwd=str(cwd) if cwd else None
@@ -119,7 +132,7 @@ def run_cmd(cmd: str, cwd: Optional[Path] = None, timeout: int = 30) -> Tuple[in
 
 
 def check_server_health() -> bool:
-    """Check if OmniRoute server is responding."""
+    """Verifica se o servidor OmniRoute está respondendo."""
     try:
         resp = requests.get(HEALTH_URL, timeout=3)
         return resp.status_code == 200
@@ -128,7 +141,7 @@ def check_server_health() -> bool:
 
 
 def get_server_pid() -> Optional[int]:
-    """Get PID from OmniRoute PID file."""
+    """Obtém o PID do servidor a partir do arquivo .pid do OmniRoute."""
     if OMNIROUTE_PID_FILE.exists():
         try:
             return int(OMNIROUTE_PID_FILE.read_text().strip())
@@ -138,67 +151,79 @@ def get_server_pid() -> Optional[int]:
 
 
 def start_server() -> Tuple[bool, str]:
-    """Start OmniRoute server in daemon mode."""
+    """Inicia o servidor OmniRoute em modo daemon."""
     OMNIROUTE_LOGS.mkdir(parents=True, exist_ok=True)
     log_file = OMNIROUTE_LOGS / "serve-launch.log"
 
     cmd = get_omniroute_cmd()
     full_cmd = f'{cmd} serve --daemon > "{log_file}" 2>&1'
 
-    # Run in background
+    # Executa em segundo plano
     try:
-        subprocess.Popen(full_cmd, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+        subprocess.Popen(
+            ["cmd.exe", "/d", "/c", full_cmd],
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
     except Exception as e:
-        return False, f"Failed to start process: {e}"
+        return False, f"Falha ao iniciar o processo: {e}"
 
-    # Wait for server to become healthy
-    for _ in range(60):  # 120 seconds max
+    # Aguarda o servidor ficar saudável
+    for _ in range(60):  # até 120 segundos
         time.sleep(2)
         if check_server_health():
-            return True, "Server started successfully"
+            return True, "Servidor iniciado com sucesso"
 
-    return False, "Server did not respond in time. Check logs at: " + str(log_file)
+    return False, "Servidor não respondeu no tempo esperado. Consulte os logs em: " + str(log_file)
 
 
 def stop_server() -> Tuple[bool, str]:
-    """Stop OmniRoute server, handling both daemon and foreground supervisor cases."""
+    """Interrompe o servidor OmniRoute, tratando daemon e supervisor em primeiro plano."""
     cmd = get_omniroute_cmd()
 
-    # 1. Graceful stop
+    # 1. Parada graciosa via comando 'stop' do OmniRoute
     code, out, err = run_cmd(f"{cmd} stop", timeout=15)
 
-    # Wait a bit
+    # Aguarda um instante para o servidor liberar a porta
     time.sleep(2)
 
-    # 2. Check if server is actually stopped
+    # 2. Servidor realmente parou?
     if not check_server_health():
-        return True, "Server stopped successfully"
+        return True, "Servidor interrompido com sucesso"
 
-    # 3. Server came back - likely a foreground supervisor. Kill the process tree.
+    # 3a. Servidor voltou — provavelmente um supervisor em primeiro plano.
+    #     Tenta primeiro encerrar pelo PID registrado no arquivo .pid.
+    pid = get_server_pid()
+    if pid:
+        run_cmd(f"taskkill /PID {pid} /T /F", timeout=15)
+        time.sleep(2)
+        if not check_server_health():
+            return True, "Servidor interrompido (PID registrado encerrado)"
+
+    # 3b. Fallback: encerra apenas processos node/omniroute cujo comando contenha 'serve'.
     try:
-        # Find processes with 'omniroute' and 'serve' in command line
         ps_cmd = (
             'powershell -NoProfile -Command '
             '"$servers = @(Get-CimInstance Win32_Process | Where-Object { '
+            '($_.Name -eq \'node.exe\' -or $_.Name -like \'omniroute*.exe\') -and '
             '$_.CommandLine -and $_.CommandLine -match \'omniroute\' -and $_.CommandLine -match \'\\bserve\\b\' }); '
             'if ($servers.Count -eq 0) { exit 1 }; '
             'foreach ($p in $servers) { '
-            'Write-Host (\'[..] Killing PID \' + $p.ProcessId + \' (\' + $p.Name + \')\'); '
+            'Write-Host (\'[..] Encerrando PID \' + $p.ProcessId + \' (\' + $p.Name + \')\'); '
             'taskkill /PID $p.ProcessId /T /F 2>&1 | Out-Null }; exit 0"'
         )
         code, out, err = run_cmd(ps_cmd, timeout=15)
         time.sleep(2)
 
         if not check_server_health():
-            return True, "Server stopped (killed supervisor process tree)"
-
-        return False, "Server still responding after kill attempt"
+            return True, "Servidor interrompido (árvore do supervisor encerrada)"
     except Exception as e:
-        return False, f"Error killing supervisor: {e}"
+        return False, f"Erro ao interromper o supervisor: {e}"
+
+    return False, "Servidor ainda respondendo após as tentativas de encerramento"
 
 
 def launch_claude_code(workspace: Path) -> bool:
-    """Launch Claude Code connected to OmniRoute in its own visible terminal."""
+    """Abre o Claude Code conectado ao OmniRoute em um terminal visível."""
     try:
         workspace = workspace.resolve(strict=True)
     except (OSError, RuntimeError):
@@ -210,10 +235,10 @@ def launch_claude_code(workspace: Path) -> bool:
 
     cmd = get_omniroute_cmd()
     full_cmd = f'{cmd} launch -- --model auto/best-free'
-    launcher = OMNIROUTE_LOGS / "omnione-launch-claude.cmd"
+    launcher = OMNIROUTE_LAUNCHERS / "omnione-launch-claude.cmd"
 
     try:
-        OMNIROUTE_LOGS.mkdir(parents=True, exist_ok=True)
+        OMNIROUTE_LAUNCHERS.mkdir(parents=True, exist_ok=True)
         launcher.write_text(
             "@echo off\n"
             "title OmniOne - Claude Code\n"
@@ -231,12 +256,12 @@ def launch_claude_code(workspace: Path) -> bool:
         )
         return True
     except Exception as e:
-        print(f"Failed to launch Claude Code: {e}")
+        print(f"Falha ao abrir o Claude Code: {e}")
         return False
 
 
 def get_workspaces() -> list:
-    """Get list of workspace directories."""
+    """Lista as pastas de workspace disponíveis."""
     if not WORKSPACE_ROOT.exists():
         return []
     try:
@@ -245,195 +270,174 @@ def get_workspaces() -> list:
         return []
 
 
-# ─── Tray Icon Creation ───
+class OmniOneWindowApp:
+    """Janela compacta de controle que abre sem esperar o servidor."""
 
-def create_tray_icon(status: str = "unknown") -> Image.Image:
-    """Create tray icon image based on status."""
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Colors based on status
-    if status == "running":
-        color = (0, 200, 0, 255)      # Green
-        inner_color = (0, 255, 0, 180)
-    elif status == "starting":
-        color = (255, 165, 0, 255)    # Orange
-        inner_color = (255, 200, 0, 180)
-    elif status == "stopped":
-        color = (200, 0, 0, 255)      # Red
-        inner_color = (255, 0, 0, 180)
-    else:
-        color = (128, 128, 128, 255)  # Gray
-        inner_color = (180, 180, 180, 180)
-
-    # Draw outer circle
-    margin = 4
-    draw.ellipse([margin, margin, size-margin, size-margin], fill=color)
-
-    # Draw inner circle
-    inner_margin = 16
-    draw.ellipse([inner_margin, inner_margin, size-inner_margin, size-inner_margin], fill=inner_color)
-
-    # Draw "O" in center
-    try:
-        font = ImageFont.truetype("arial.ttf", 28)
-    except Exception:
-        font = ImageFont.load_default()
-
-    text = "O"
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    x = (size - text_width) // 2
-    y = (size - text_height) // 2 - 2
-    draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
-
-    return img
-
-
-# ─── Tray Application Class ───
-
-class OmniOneTrayApp:
     def __init__(self):
-        self.icon: Optional[pystray.Icon] = None
+        self.root = tk.Tk()
+        self.root.title("OmniOne")
+        self.root.geometry("360x460")
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_exit)
         self.server_status = "unknown"
-        self.update_thread: Optional[threading.Thread] = None
         self.running = False
+        self.status_label = None
+        self.status_detail = None
+        self.start_button = None
+        self.stop_button = None
+        self.workspace_box = None
+        self.action_buttons = []
+        self._build_window()
 
-    def update_status(self):
-        """Background thread to update server status and tray icon."""
-        while self.running:
-            # Do not overwrite the explicit "starting" state while the
-            # background start/restart operation is waiting for health checks.
-            if self.server_status == "starting":
-                time.sleep(1)
-                continue
-            healthy = check_server_health()
-            new_status = "running" if healthy else "stopped"
+    # ─── Agendamento seguro da GUI ───
 
-            if new_status != self.server_status:
-                self.server_status = new_status
-                if self.icon:
-                    self.icon.icon = create_tray_icon(new_status)
-                    self.update_menu()
+    def _safe_after(self, ms: int, func, *args):
+        """Agenda um callback na thread principal, tolerando o fechamento da janela."""
+        self.root.after(ms, self._safe_apply, func, *args)
 
-            time.sleep(5)
+    def _safe_apply(self, func, *args):
+        """Aplica o callback, ignorando erros quando a janela já foi destruída."""
+        try:
+            func(*args)
+        except tk.TclError:
+            pass  # A janela foi fechada antes do callback executar
 
-    def update_menu(self):
-        """Update the tray menu based on current status."""
-        if not self.icon:
-            return
+    def _build_window(self):
+        self.root.configure(padx=18, pady=16)
+        ttk.Label(self.root, text="OmniOne", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(self.root, text="Controle do OmniRoute e Claude Code", foreground="#666666").pack(anchor="w", pady=(0, 16))
 
-        status_text = {
-            "running": "🟢 OmniOne: ATIVO",
-            "stopped": "🔴 OmniOne: PARADO",
-            "starting": "🟡 OmniOne: INICIANDO...",
-            "unknown": "⚪ OmniOne: DESCONHECIDO",
-        }.get(self.server_status, "⚪ OmniOne: DESCONHECIDO")
+        status_frame = ttk.Frame(self.root)
+        status_frame.pack(fill="x", pady=(0, 14))
+        self.status_label = tk.Label(status_frame, text="●  Verificando...", font=("Segoe UI", 12, "bold"), anchor="w")
+        self.status_label.pack(fill="x")
+        self.status_detail = tk.Label(status_frame, text="A janela está pronta; a verificação ocorre em segundo plano.", fg="#666666", anchor="w", justify="left", wraplength=320)
+        self.status_detail.pack(fill="x", pady=(4, 0))
 
+        controls = ttk.Frame(self.root)
+        controls.pack(fill="x")
+        self.start_button = ttk.Button(controls, text="Iniciar / Reiniciar", command=self.on_start_server)
+        self.start_button.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.stop_button = ttk.Button(controls, text="Parar", command=self.on_stop_server)
+        self.stop_button.pack(side="left", fill="x", expand=True)
+
+        ttk.Separator(self.root).pack(fill="x", pady=16)
+        ttk.Label(self.root, text="Workspace", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        self.workspace_box = ttk.Combobox(self.root, state="readonly")
+        self.workspace_box.pack(fill="x", pady=(6, 8))
+        claude_button = ttk.Button(self.root, text="Abrir Claude Code", command=self.on_launch_selected_workspace)
+        claude_button.pack(fill="x")
+        self.action_buttons.append(claude_button)
+
+        bottom = ttk.Frame(self.root)
+        bottom.pack(fill="x", pady=(16, 0))
+        logs_button = ttk.Button(bottom, text="Abrir logs", command=self.on_view_logs)
+        logs_button.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        dashboard_button = ttk.Button(bottom, text="Dashboard", command=self.on_open_dashboard)
+        dashboard_button.pack(side="left", fill="x", expand=True)
+        self.action_buttons.extend([logs_button, dashboard_button])
+
+        # Rodapé com a assinatura do projeto
+        self.footer_link = tk.Label(self.root, text="Prod por 2E · https://e2dev.me/", fg="#0067c0", cursor="hand2", anchor="w")
+        self.footer_link.pack(fill="x", pady=(14, 0))
+        self.footer_link.bind("<Button-1>", lambda e: self._open_site())
+
+        self.refresh_workspaces()
+
+    def _open_site(self):
+        """Abre o site do projeto no navegador padrão."""
+        import webbrowser
+        webbrowser.open("https://e2dev.me/")
+
+    def refresh_workspaces(self):
         workspaces = get_workspaces()
-        workspace_items = []
+        names = [workspace.name for workspace in workspaces]
+        self.workspace_box["values"] = names
+        if names:
+            self.workspace_box.current(0)
+        else:
+            self.workspace_box.set("Nenhum workspace encontrado")
 
-        def make_workspace_action(workspace: Path):
-            def action(icon, item):
-                self.on_launch_claude(workspace)
-            return action
+    def set_status(self, status: str):
+        self.server_status = status
+        labels = {
+            "running": ("●  OmniRoute ativo", "#16803c"),
+            "stopped": ("●  OmniRoute parado", "#b42318"),
+            "starting": ("●  Iniciando OmniRoute...", "#b54708"),
+            "stopping": ("●  Parando OmniRoute...", "#b54708"),
+            "unknown": ("●  Verificando...", "#666666"),
+        }
+        label, color = labels.get(status, labels["unknown"])
+        self.status_label.configure(text=label, fg=color)
+        self.start_button.configure(state="disabled" if status in ("starting", "stopping") else "normal")
+        self.stop_button.configure(state="normal" if status == "running" else "disabled")
+        for button in self.action_buttons:
+            button.configure(state="normal" if status == "running" else "disabled")
 
-        for ws in workspaces:
-            workspace_items.append(
-                pystray.MenuItem(
-                    f"📁 {ws.name}",
-                    make_workspace_action(ws),
-                    enabled=self.server_status == "running"
-                )
-            )
+    def set_detail(self, message: str):
+        self.status_detail.configure(text=message)
 
-        if not workspace_items:
-            workspace_items = [pystray.MenuItem("No workspaces found", None, enabled=False)]
-
-        menu = pystray.Menu(
-            pystray.MenuItem(status_text, None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "▶ Start Server" if self.server_status == "stopped" else "⏳ Starting..." if self.server_status == "starting" else "🔄 Restart Server",
-                self.on_start_server,
-                enabled=self.server_status != "starting"
-            ),
-            pystray.MenuItem(
-                "■ Stop Server",
-                self.on_stop_server,
-                enabled=self.server_status == "running"
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Workspaces", pystray.Menu(*workspace_items)),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("📋 View Logs", self.on_view_logs),
-            pystray.MenuItem("🌐 Open Dashboard", self.on_open_dashboard),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("❌ Exit", self.on_exit)
-        )
-        self.icon.menu = menu
-
-    def on_start_server(self, icon=None, item=None):
-        if self.server_status == "starting":
+    def check_status_loop(self):
+        if not self.running:
             return
+        if self.server_status not in ("starting", "stopping"):
+            def check_in_background():
+                healthy = check_server_health()
+                self._safe_after(0, self.set_status, "running" if healthy else "stopped")
 
+            threading.Thread(target=check_in_background, daemon=True).start()
+        self._safe_after(5000, self.check_status_loop)
+
+    def on_start_server(self):
+        if self.server_status in ("starting", "stopping"):
+            return
         was_running = self.server_status == "running"
-        self.server_status = "starting"
-        self.icon.icon = create_tray_icon("starting")
-        self.update_menu()
+        self.set_status("starting")
+        self.set_detail("Aguarde. O primeiro início pode levar mais tempo se o OmniRoute ainda não estiver no cache.")
 
         def do_start():
             if was_running:
                 stopped, stop_message = stop_server()
-                if not stopped:
-                    success, msg = False, stop_message
-                else:
-                    success, msg = start_server()
+                success, message = (start_server() if stopped else (False, stop_message))
             else:
-                success, msg = start_server()
-            if success:
-                self.server_status = "running"
-            else:
-                self.server_status = "stopped"
-            self.icon.icon = create_tray_icon(self.server_status)
-            self.update_menu()
-            # Show notification
-            if self.icon:
-                self.icon.notify(msg, "OmniOne")
+                success, message = start_server()
+            self._safe_after(0, self.set_status, "running" if success else "stopped")
+            self._safe_after(0, self.set_detail, message)
 
         threading.Thread(target=do_start, daemon=True).start()
 
-    def on_stop_server(self, icon=None, item=None):
+    def on_stop_server(self):
+        self.set_status("stopping")
+        self.set_detail("Encerrando o servidor...")
+
         def do_stop():
-            self.icon.notify("Encerrando o servidor...", "OmniOne")
-            success, msg = stop_server()
-            if success:
-                self.server_status = "stopped"
-            else:
-                self.server_status = "running"  # Still running
-            self.icon.icon = create_tray_icon(self.server_status)
-            self.update_menu()
-            self.icon.notify(msg, "OmniOne")
+            success, message = stop_server()
+            self._safe_after(0, self.set_status, "stopped" if success else "running")
+            self._safe_after(0, self.set_detail, message)
 
         threading.Thread(target=do_stop, daemon=True).start()
 
+    def on_launch_selected_workspace(self):
+        names = list(self.workspace_box["values"])
+        index = self.workspace_box.current()
+        if index < 0 or index >= len(names):
+            self.set_detail("Selecione um workspace válido.")
+            return
+        self.on_launch_claude(WORKSPACE_ROOT / names[index])
+
     def on_launch_claude(self, workspace: Path):
         if self.server_status != "running":
-            self.icon.notify("O servidor precisa estar ativo para abrir o Claude Code", "OmniOne")
+            self.set_detail("O servidor precisa estar ativo para abrir o Claude Code.")
             return
 
         def do_launch():
             success = launch_claude_code(workspace)
-            if success:
-                self.icon.notify(f"Claude Code aberto em {workspace.name}", "OmniOne")
-            else:
-                self.icon.notify("Não foi possível abrir o Claude Code", "OmniOne")
+            message = f"Claude Code aberto em {workspace.name}." if success else "Não foi possível abrir o Claude Code."
+            self._safe_after(0, self.set_detail, message)
 
         threading.Thread(target=do_launch, daemon=True).start()
 
-    def on_view_logs(self, icon=None, item=None):
+    def on_view_logs(self):
         log_file = OMNIROUTE_LOGS / "serve-launch.log"
         if log_file.exists():
             try:
@@ -441,59 +445,30 @@ class OmniOneTrayApp:
             except Exception:
                 subprocess.Popen(["notepad.exe", str(log_file)])
         else:
-            self.icon.notify("Nenhum arquivo de log encontrado", "OmniOne")
+            self.set_detail("Nenhum arquivo de log encontrado.")
 
-    def on_open_dashboard(self, icon=None, item=None):
+    def on_open_dashboard(self):
         try:
             subprocess.Popen(f"{get_omniroute_cmd()} dashboard", shell=True)
         except Exception:
             import webbrowser
             webbrowser.open("http://localhost:20128")
 
-    def on_exit(self, icon=None, item=None):
+    def on_exit(self):
         self.running = False
-        if self.icon:
-            self.icon.stop()
+        self.root.destroy()
 
     def run(self):
         self.running = True
-        loading_done = threading.Event()
-        loading_thread = threading.Thread(target=show_loading, args=(loading_done,), daemon=True)
-        loading_thread.start()
-
-        # Initial status check
-        self.server_status = "running" if check_server_health() else "stopped"
-
-        # Create icon
-        self.icon = pystray.Icon(
-            "OmniOne",
-            create_tray_icon(self.server_status),
-            "OmniOne Controller",
-            menu=pystray.Menu()  # Will be set in update_menu
-        )
-
-        # Start status update thread
-        self.update_thread = threading.Thread(target=self.update_status, daemon=True)
-        self.update_thread.start()
-
-        # Initial menu setup
-        self.update_menu()
-        loading_done.set()
-        loading_thread.join(timeout=1)
-        print(f"\r[OmniOne] Pronto. Servidor: {self.server_status.upper()}.")
-        print("O OmniOne permanece aberto nesta janela e na bandeja do sistema.")
-        print("Feche pelo menu 'Sair' da bandeja ou com Ctrl+C.")
-
-        # Run the icon (blocks until exit)
-        self.icon.run()
+        self._safe_after(100, self.check_status_loop)
+        self.root.mainloop()
 
 
 def main():
     if not acquire_single_instance():
-        print("O OmniOne já está aberto. Procure o ícone na bandeja do sistema.")
-        time.sleep(3)
+        messagebox.showinfo("OmniOne", "O OmniOne já está aberto.")
         return
-    app = OmniOneTrayApp()
+    app = OmniOneWindowApp()
     app.run()
 
 
