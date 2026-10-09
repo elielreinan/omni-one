@@ -93,7 +93,29 @@ if ($AutoStart) {
     Write-Host "[OK] Created Startup shortcut for auto-start" -ForegroundColor Green
 }
 
-# 5. Inicia o app agora
+# 5. Confere o Node.js exigido pelo OmniRoute 3.8.51 (22.22.2+, 24.x, 25.x ou 26.x)
+$nodeVersion = $null
+try { $nodeVersion = (& node -v) 2>$null } catch { }
+if (-not $nodeVersion) {
+    Write-Host "[!] Node.js não encontrado. Instale o Node.js 24 LTS em https://nodejs.org antes de iniciar o OmniRoute." -ForegroundColor Yellow
+} else {
+    $nodeOk = $false
+    try {
+        $v = [version]($nodeVersion.Trim().TrimStart('v'))
+        $nodeOk = ($v.Major -eq 22 -and $v -ge [version]"22.22.2") -or ($v.Major -ge 24 -and $v.Major -le 26)
+    } catch { }
+    if ($nodeOk) {
+        Write-Host "[OK] Node.js $nodeVersion compatível com o OmniRoute" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Node.js $nodeVersion não é aceito pelo OmniRoute. Instale o Node.js 24 LTS (ou 22.22.2+) em https://nodejs.org." -ForegroundColor Yellow
+    }
+}
+if (-not (Get-Command omniroute -ErrorAction SilentlyContinue)) {
+    Write-Host "[i] OmniRoute não está instalado globalmente; o OmniOne usará o npx no primeiro início." -ForegroundColor Cyan
+    Write-Host "    Para um início mais rápido: npm install -g omniroute" -ForegroundColor Cyan
+}
+
+# 6. Inicia o app agora
 if ($StartNow) {
     Write-Host ""
     Write-Host "Iniciando OmniOne..." -ForegroundColor Cyan
@@ -109,7 +131,7 @@ Write-Host "  $exeTarget"
 Write-Host ""
 Write-Host "Recursos:"
 Write-Host "  - Janela compacta de controle (abre imediatamente)"
-Write-Host "  - Iniciar, parar e reiniciar o servidor OmniOne"
+Write-Host "  - Iniciar, parar e reiniciar o servidor OmniRoute"
 Write-Host "  - Abre o Claude Code em qualquer workspace"
 Write-Host "  - Abre logs e dashboard"
 Write-Host "  - Inicia automaticamente com o Windows"
