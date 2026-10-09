@@ -6,7 +6,8 @@ a = Analysis(
     ['omnione_tray.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # Build da interface React (rode 'npm run build' em frontend/ antes).
+    datas=[('frontend/dist', 'web')],
     hiddenimports=[
         'requests',
         'urllib3',
@@ -14,6 +15,7 @@ a = Analysis(
         'charset_normalizer',
         'idna',
         'six',
+        'webview',
     ],
     hookspath=[],
     hooksconfig={},

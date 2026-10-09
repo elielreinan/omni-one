@@ -1,0 +1,2 @@
+requests>=2.31
+pywebview>=5.0

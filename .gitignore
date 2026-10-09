@@ -11,3 +11,8 @@ __pycache__/
 # PyInstaller build artifacts
 build/
 *.spec.bak
+
+# Frontend (React)
+node_modules/
+frontend/dist/
+*.tsbuildinfo
