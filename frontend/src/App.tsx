@@ -111,7 +111,7 @@ export default function App() {
             <span className="eyebrow">Servidor</span>
             <strong>{STATUS_LABEL[status]}</strong>
           </div>
-          <span className="port">:20128</span>
+          <span className="port">:{info?.port ?? 20128}</span>
         </div>
         <p className="status__detail">{state.detail}</p>
         <div className="row">

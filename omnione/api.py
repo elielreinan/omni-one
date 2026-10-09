@@ -60,6 +60,7 @@ class Api:
         return {
             "omnirouteVersion": core.OMNIROUTE_VERSION,
             "healthUrl": core.get_health_url(),
+            "port": core.get_omniroute_port(),
             "workspaceRoot": str(core.WORKSPACE_ROOT),
         }
 

@@ -17,6 +17,7 @@ export interface ActionResult {
 export interface AppInfo {
   omnirouteVersion: string;
   healthUrl: string;
+  port: number;
   workspaceRoot: string;
 }
 
@@ -53,8 +54,9 @@ function createMockApi(): OmniOneApi {
   return {
     get_state: async () => state,
     get_info: async () => ({
-      omnirouteVersion: "3.8.50",
-      healthUrl: "http://localhost:20128/api/monitoring/health",
+      omnirouteVersion: "3.8.51",
+      healthUrl: "http://127.0.0.1:20128/api/monitoring/health",
+      port: 20128,
       workspaceRoot: "C:\\Users\\voce\\Workspace",
     }),
     start: () => transition("starting", "running", "Iniciando o OmniRoute...", "Servidor iniciado com sucesso"),
