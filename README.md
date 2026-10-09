@@ -12,11 +12,18 @@ O **OmniRoute** é uma ferramenta poderosa, mas quem não vive de terminal costu
 
 ## Como o OmniOne se conecta ao OmniRoute
 
-- Resolve o comando `omniroute` (shim npm no PATH, caminho em cache ou instalação automática via `npx`);
-- Inicia o servidor em segundo plano com `omniroute serve --daemon`;
-- Monitora a saúde do servidor em `http://localhost:20128/api/monitoring/health`;
-- Abre o Claude Code no workspace selecionado com `omniroute launch`;
-- Para o servidor com `omniroute stop` (e, se necessário, encerra à força usando o PID em `~/.omniroute/server/.pid`).
+Validado com o **OmniRoute 3.8.51**.
+
+- Resolve o comando `omniroute` (shim npm no PATH, cópia em cache do `npx` na versão validada ou mais nova, ou download automático via `npx`);
+- Confere o Node.js antes de iniciar (o OmniRoute 3.8.51 só roda em Node.js 22.22.2+, 24.x, 25.x ou 26.x);
+- Inicia o servidor em segundo plano com `omniroute serve --daemon --port <porta>`;
+- Monitora a saúde do servidor em `http://127.0.0.1:<porta>/api/monitoring/health`;
+- Abre o Claude Code no workspace selecionado com `omniroute launch --port <porta> -- --model auto/best-free`;
+- Para o servidor com `omniroute stop` e, se necessário, encerra à força os PIDs registrados pelo OmniRoute (`server/.pid` e `supervisor/.pid`) ou o processo que estiver escutando na porta.
+
+A porta padrão é `20128`. Se você mudou a porta do OmniRoute (variável `PORT` ou `PORT=` no `.env` da pasta de dados), o OmniOne usa a mesma.
+
+A pasta de dados do OmniRoute é resolvida como o próprio OmniRoute faz: `DATA_DIR`, depois `%USERPROFILE%\.omniroute` (se existir), depois `%APPDATA%\omniroute`. O botão **Abrir logs** abre o log do servidor (`logs\application\app.log` nessa pasta). Os arquivos do próprio OmniOne (log de início, script do Claude Code) ficam em `%LOCALAPPDATA%\OmniOne`.
 
 ## Instalar
 
@@ -29,7 +36,7 @@ O instalador cria também a inicialização automática do Windows. Na janela co
 
 ### Requisitos
 - Windows 10 ou 11
-- Node.js com `npm` (o `npx` baixa o OmniRoute automaticamente na primeira execução, se necessário)
+- Node.js **24 LTS** (ou 22.22.2+, 25.x, 26.x) com `npm`. O `npx` baixa o OmniRoute automaticamente na primeira execução; para iniciar mais rápido, instale com `npm install -g omniroute`
 - Python 3.x **apenas** se quiser reconstruir o executável (seção abaixo)
 
 ### Primeiro uso
