@@ -37,10 +37,10 @@ O instalador cria também a inicialização automática do Windows. Na janela co
 ### Requisitos
 - Windows 10 ou 11
 - Node.js **24 LTS** (ou 22.22.2+, 25.x, 26.x) com `npm`. O `npx` baixa o OmniRoute automaticamente na primeira execução; para iniciar mais rápido, instale com `npm install -g omniroute`
-- Python 3.x **apenas** se quiser reconstruir o executável (seção abaixo)
+- Python 3.x e Node.js **apenas** se quiser reconstruir o executável (seção abaixo)
 
 ### Primeiro uso
-1. Abra o OmniOne e clique em **Iniciar / Reiniciar**. A primeira inicialização pode demorar mais se o OmniRoute ainda não estiver no cache do `npx`.
+1. Abra o OmniOne e clique em **Iniciar**. A primeira inicialização pode demorar mais se o OmniRoute ainda não estiver no cache do `npx`.
 2. Com o status **"OmniRoute ativo"**, selecione o workspace desejado.
 3. Clique em **Abrir Claude Code** — o terminal abre no workspace escolhido.
 4. Use **Abrir logs** e **Dashboard** para acompanhar o servidor.
@@ -55,9 +55,27 @@ Este projeto é **código aberto**: você pode usar, estudar, modificar e desenv
 
 **Aceito feedbacks e críticas.** Se algo quebrou, faltou ou pode melhorar, abra uma issue ou entre em contato.
 
+## Estrutura do projeto
+
+- `frontend/` — interface em **React + TypeScript** (Vite).
+- `omnione/` — backend em **Python**: `core.py` controla o OmniRoute, `api.py` expõe as ações para a interface e `app.py` abre a janela com o [pywebview](https://pywebview.flowrl.com/) (WebView2 do Windows).
+- `omnione_tray.py` — ponto de entrada usado pelo PyInstaller.
+
+## Desenvolver a interface
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+No navegador a interface usa um backend simulado, então dá para ajustar o visual sem Windows nem OmniRoute. Use `?status=running` na URL para ver o estado ativo. Para testar com o backend real, rode `$env:OMNIONE_DEV_URL="http://localhost:5173"; python omnione_tray.py` com o `npm run dev` aberto.
+
 ## Recriar o executável
 
 ```powershell
+cd frontend; npm install; npm run build; cd ..
+python -m pip install -r requirements.txt pyinstaller
 python -m PyInstaller omnione_tray.spec --clean
 ```
 
